@@ -44,8 +44,8 @@ with arcpy.da.SearchCursor(sds_stops, ['STOPID','LONGITUDE','LATITUDE','STOPNAME
     for row in cursor1:
         stops_latlong_dict[row[0]] = [row[1]*1000000,row[2]*1000000,row[3]]
 
-# Creates a function that finds blank X and Y values in the stops dictionary from Spatial Data Store
 def getmissingxyvalues(row, pickxy):
+    # Finds blank X or Y values in the stops dictionary from Spatial Data Store
     stopid = row['PointID']
     if pickxy == 'Longitude':
         if row[pickxy] == 0 and stopid in stops_latlong_dict.keys():
