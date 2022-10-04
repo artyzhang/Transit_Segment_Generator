@@ -1,72 +1,90 @@
-# Create bus route layer
+# Tool that cuts a line by a list of points
 
-# Create stops layer
+# Run near tool
+arcpy.analysis.Near('bk_pattern_stops','bk_bus_shapes',location='LOCATION')
 
-# Choose a route 
+def linevertices(polyline): # Return point data for a polyline
+    return [(point.X,point.Y) for point in polyline[0]]
 
-''' OPTION 1 '''
+def getxydata(fc, fc_field, valuelist): # Return lat longs for a point or a polyline
+    if arcpy.Describe(fc).shapeType == 'Polyline':
+        with arcpy.da.SearchCursor(fc, [fc_field,'SHAPE@']) as cursor:
+            xys = []
+            for row in cursor:
+                if row[0] in valuelist:
+                    xys.append(row[1])
+            return [linevertices(line) for line in xys]
+    elif arcpy.Describe(fc).shapeType == 'Point':
+        with arcpy.da.SearchCursor(fc, [fc_field,'SHAPE@XY']) as cursor:
+            xys = []
+            for row in cursor:
+                if row[0] in valuelist:
+                    xys.append(row[1])
+            return xys
 
-# Create new feature class
+def getnearxy(fc): # Return near x and near y coordinates
+    with arcpy.da.SearchCursor(fc, ['NEAR_X','NEAR_Y']) as cursor:
+        xys = []
+        for row in cursor:
+            xys.append((row[0],row[1]))
+        return xys
+                           
+newnear = getnearxy('bk_pattern_stops')
 
-# Create a copy of the route in new feature class
+def arcpt(coord): # Create Point Geometry from lat long tuple
+    sr = arcpy.SpatialReference(4326)
+    return arcpy.PointGeometry(arcpy.Point(*coord),sr)
 
-# Return list of stops that serve the route 
+def findtwoclosest(in_point, points_list): # Finds where in the line to insert a lat long point 
+    start = arcpt(in_point)
+    distances = [start.distanceTo(arcpt(point2)) for point2 in points_list]
+    ordered = sorted(distances)
+    begin = distances.index(ordered[0])
+    end = distances.index(ordered[1])
+    return (begin, end)
 
-# Snap all stops along the route to the route
+def closest(in_point,points_list): # For a given lat long, finds the closest point from a list of points
+    start = arcpt(in_point)
+    distances = [start.distanceTo(arcpt(point2)) for point2 in points_list]
+    return distances.index(min(distances))
 
-# Split line by points 
-
-# Dissolve the line again
-
-# Retrieve list of XY for the route
-
-''' OPTION 2 '''
-
-# Create new feature class
-
-# Create a copy of the route in new feature class
-
-# Return list of stops that serve the route 
-
-# Retrieve lat longs for the whole route
-
-# For each stop:
-# Check if the stop is in the lat long list. If yes, move on
-
-# If not, find the closest lat long in the list, get the index
-# Find the second closest lat long in the list, get the index
-# Make a point object 
-# Then insert the lat long between those lat longs
-
-# Go back to the beginning of the route XY list
-# For each stop to stop pair run compare return index and splitzippedlistbyanother (rewrite code so it uses enumerate instead)
-
-def comparereturnindex(l1,l2):
-    # Returns the index of where items in a second list appear in the first list, along with missing values
-    splitvalues = []
-    missingvalues = []
-    for item in l2:
-        if item in l1:
-            splitvalues.append(l1.index(item))
+def insertpointsintoline(in_points,points_list): # Insert points into line
+    newline = points_list
+    for newpoint in in_points:
+        between = findtwoclosest(newpoint,newline) 
+        if between[0] <= between[1]:
+            insertat = between[0]
         else:
-            missingvalues.append(item)
-    return [splitvalues,missingvalues]
+            insertat = between[1]
+        newline.insert(insertat,newpoint)
+    return newline
+    
+def createsubstring(from_point,to_point,points_list, startof=False, endof=False):
+    if startof == True:
+        start = 0
+    else:
+        start = points_list.index(from_point)
+    if endof == True:
+        end = -1
+    else:
+        end = points_list.index(to_point) + 1
+    return points_list[start:end]
 
-def splitzippedlistbyanother(zippedlist, splitvalues, inclusive=True):
-    # Split half of a zipped list by the designated break points in a second list. If all items in the first list should be preserved, inclusive is True.
-    sliceindex = comparereturnindex([x for (x,y) in zippedlist],splitvalues)[0]
-    missingindex = comparereturnindex([x for (x,y) in zippedlist],splitvalues)[1]
-    if len(sliceindex) == 1:
-        singlevalue = sliceindex[0]
-        sliceindex = [0,singlevalue,len(zippedlist)-1]
-    if inclusive == True:
-        sliceindex[0] = 0
-        sliceindex[-1] = len(zippedlist)-1
-    sliceranges = createrangetuples(sliceindex)
-    listoflists = []
-    for r in sliceranges:
-        listoflists.append(zippedlist[r[0]:r[1]+1])
-    return [listoflists,missingindex]
+def constructsubstring(stop_points, line_points):
+    linewithpoints = insertpointsintoline(stop_points,line_points)
+    newline = []
+    for i, stop in enumerate(stop_points):
+        if i < len(stop_points) - 1:
+            to_stop = stop_points[i+1]
+            if i == 0:
+                newline.append(createsubstring(stop, to_stop, linewithpoints, startof=True))
+            elif i == len(stop_points)-1:
+                newline.append(createsubstring(stop, to_stop, linewithpoints, endof=True))
+            else:
+                newline.append(createsubstring(stop, to_stop, linewithpoints))
+    return newline
+
+newline = constructsubstring(newnear,routexys[0])
 
 # Create a row for each segment with route ID, direction, etc.
 # Create a from node and to node
@@ -75,41 +93,17 @@ def splitzippedlistbyanother(zippedlist, splitvalues, inclusive=True):
 
 # Put row in the feature class using InsertCursor
 
-from math import cos, asin, sqrt
+geodb = r'C:\Users\1280530\GIS\GTFS to Feature Class\Points_Near.gdb'
+arcpy.CreateFeatureclass_management(geodb,"transitseg_test","POLYLINE",spatial_reference = 4326)
 
-def distance(lat1, lon1, lat2, lon2):
-    p = 0.017453292519943295
-    hav = 0.5 - cos((lat2-lat1)*p)/2 + cos(lat1*p)*cos(lat2*p) * (1-cos((lon2-lon1)*p)) / 2
-    return 12742 * asin(sqrt(hav))
-
-def closest(data, v):
-    return min(data, key=lambda p: distance(v['lat'],v['lon'],p['lat'],p['lon']))
-
-
-'''
-    def _make_line_from_shape(self, shape_id):
-        """Make a polyline object by connecting the lat/lon points for a given shape_id.
-
-        Args:
-            shape_id: GTFS shape_id to pull from the table and convert to a polyline
-        Returns:
-            arcpy polyline object for this shape_id
-        Raises:
-            No exceptions.
-        """
-        # Fetch the shape points for this shape_id, in order.
-        this_shape_df = self.shapes_table.data_frame.get_group(shape_id).sort_values(by="shape_pt_sequence")
-
-        # Create the polyline feature from the sequence of points
-        lats = this_shape_df[self.shapes_table.lat_field].tolist()
-        lons = this_shape_df[self.shapes_table.lon_field].tolist()
+with arcpy.da.InsertCursor("transitseg_test",['SHAPE@']) as cur:
+    sr = arcpy.SpatialReference(4326)
+    for segment in newline:
         array = arcpy.Array()
-        for idx, lat in enumerate(lats):
+        for x,y in segment:
             point = arcpy.Point()
-            point.X = float(lons[idx])
-            point.Y = float(lat)
+            point.X = float(x)
+            point.Y = float(y)
             array.add(point)
-        polyline = arcpy.Polyline(array, gtfs_utils.WGS_COORDS)
-
-        return polyline
-'''
+        polyline = arcpy.Polyline(array,sr)
+        cur.insertRow([polyline])
